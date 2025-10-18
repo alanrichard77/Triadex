@@ -1,1 +1,133 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Triadex • Cotações</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Triadex</h1>
+      <p class="subtitle">Módulo 1, cotações confiáveis e rápidas</p>
+    </header>
+
+    <section class="card search">
+      <input id="q" type="text" placeholder="Digite um ticker, ex: PETR4, VALE3, IVVB11, AAPL" />
+      <button id="btn">Buscar</button>
+      <small class="hint">Dica: para ações da B3 você pode usar PETR4, VALE3, IVVB11. O sistema resolve .SA automaticamente.</small>
+    </section>
+
+    <section id="result" class="card result hidden">
+      <div class="row">
+        <div>
+          <div class="name" id="name">—</div>
+          <div class="ticker" id="ticker">—</div>
+        </div>
+        <div class="price-block">
+          <div class="price" id="price">—</div>
+          <div class="change" id="change">—</div>
+          <div class="meta"><span id="currency">—</span> • <span id="asof">—</span> • <span id="source">—</span></div>
+        </div>
+      </div>
+      <div class="grid">
+        <div class="metric">
+          <div class="label">Market Cap</div>
+          <div class="value" id="mcap">—</div>
+        </div>
+        <div class="metric">
+          <div class="label">Volume</div>
+          <div class="value" id="vol">—</div>
+        </div>
+        <div class="metric">
+          <div class="label">Confiança</div>
+          <div class="value" id="conf">—</div>
+        </div>
+      </div>
+      <div class="notes" id="notes"></div>
+    </section>
+
+    <footer>
+      <span>Fonte principal, Brapi com fallback Yahoo Finance, latência otimizada</span>
+      <span class="brand">@alan_richard</span>
+    </footer>
+  </div>
+
+  <script>
+    const elQ = document.getElementById('q');
+    const elBtn = document.getElementById('btn');
+    const elRes = document.getElementById('result');
+
+    function formatNumber(n) {
+      if (n === null || n === undefined) return "—";
+      return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 }).format(n);
+    }
+
+    function formatMoney(n, ccy) {
+      if (n === null || n === undefined) return "—";
+      return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: ccy || 'BRL' }).format(n);
+    }
+
+    function formatMCap(x, ccy) {
+      if (x === null || x === undefined) return "—";
+      const abs = Math.abs(x);
+      let v = x, suffix = '';
+      if (abs >= 1e12) { v = x / 1e12; suffix = ' tri'; }
+      else if (abs >= 1e9) { v = x / 1e9; suffix = ' bi'; }
+      else if (abs >= 1e6) { v = x / 1e6; suffix = ' mi'; }
+      return `${formatNumber(v)}${suffix} ${ccy || ''}`.trim();
+    }
+
+    function show(data) {
+      elRes.classList.remove('hidden');
+
+      document.getElementById('name').textContent = data.resolved.name || data.resolved.symbol;
+      document.getElementById('ticker').textContent = data.resolved.symbol;
+
+      const last = data.price.last;
+      const pct = data.price.change_pct;
+      const ccy = data.price.currency || 'BRL';
+
+      document.getElementById('price').textContent = formatMoney(last, ccy);
+      document.getElementById('currency').textContent = ccy;
+      document.getElementById('asof').textContent = data.price.asof ? data.price.asof : 'agora';
+      document.getElementById('source').textContent = data.price.source;
+
+      const ch = document.getElementById('change');
+      if (pct === null || pct === undefined) {
+        ch.textContent = '—';
+        ch.className = 'change';
+      } else {
+        const sign = pct >= 0 ? '+' : '';
+        ch.textContent = `${sign}${pct.toFixed(2)}%`;
+        ch.className = 'change ' + (pct >= 0 ? 'up' : 'down');
+      }
+
+      document.getElementById('mcap').textContent = formatMCap(data.market_cap.value, data.market_cap.currency);
+      document.getElementById('vol').textContent = data.volume.value ? formatNumber(data.volume.value) : '—';
+      document.getElementById('conf').textContent = data.status.confidence;
+
+      const notes = data.status.notes || [];
+      document.getElementById('notes').innerHTML = notes.length ? `<ul>${notes.map(n => `<li>${n}</li>`).join('')}</ul>` : '';
+    }
+
+    async function fetchQuote() {
+      const q = elQ.value.trim();
+      if (!q) return;
+      const url = `/api/quote?q=${encodeURIComponent(q)}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        alert('Não consegui obter a cotação. Tente novamente em instantes.');
+        return;
+      }
+      const data = await res.json();
+      show(data);
+    }
+
+    elBtn.addEventListener('click', fetchQuote);
+    elQ.addEventListener('keydown', e => { if (e.key === 'Enter') fetchQuote(); });
+  </script>
+</body>
+</html>
 
