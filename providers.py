@@ -28,13 +28,16 @@ async def fetch_brapi(symbol: str) -> Optional[Dict[str, Any]]:
     """Busca dados de cotação na API da Brapi."""
     url = BRAPI_URL.format(symbol=symbol.replace("^", ""))
     params = {"range": "1d"}
+
     async with httpx.AsyncClient(timeout=BRAPI_TIMEOUT) as client:
         r = await client.get(url, params=params)
         if r.status_code != 200:
             return None
+
         data = r.json()
         if not data or "results" not in data or not data["results"]:
             return None
+
         return data["results"][0]
 
 
@@ -69,6 +72,7 @@ def fetch_yahoo_sync(symbol: str) -> Optional[Dict[str, Any]]:
     """Busca dados via yfinance (modo síncrono)."""
     t = yf.Ticker(symbol)
     info = {}
+
     try:
         fast = t.fast_info
         info["last"] = getattr(fast, "last_price", None)
@@ -84,6 +88,7 @@ def fetch_yahoo_sync(symbol: str) -> Optional[Dict[str, Any]]:
             info["volume"] = i.get("volume")
         except Exception:
             return None
+
     return info
 
 
@@ -107,33 +112,11 @@ def parse_yahoo(symbol: str, data: Dict[str, Any]) -> QuoteInternal:
             currency=currency
         ),
         volume=QuoteOutVolume(value=float(volume) if volume is not None else None),
-        status=QuoteOutStatus(confidence="medium", notes=["Variação diária não disponível no Yahoo"])
+        status=QuoteOutStatus(
+            confidence="medium",
+            notes=["Variação diária não disponível no Yahoo"]
+        )
     )
 
 
-# =============== ORQUESTRADOR COM FALLBACK ===============
-class QuoteOrchestrator:
-    """Orquestra consultas e aplica fallback automático entre fontes."""
-
-    def __init__(self):
-        self.cache = _CACHE
-
-    async def get_quote(self, resolved: ResolvedSymbol, prefer: Optional[str] = None) -> QuoteInternal:
-        cache_key = f"{resolved.symbol}:{prefer or 'auto'}"
-        if cache_key in self.cache:
-            return self.cache[cache_key]
-
-        providers = ["brapi", "yahoo"]
-        if prefer in providers:
-            providers.remove(prefer)
-            ordered = [prefer] + providers
-        else:
-            ordered = providers
-
-        last_error = None
-        for p in ordered:
-            try:
-                if p == "brapi":
-                    data = await fetch_brapi(resolved.symbol)
-                    if data:
-                        parsed = pa
+#
