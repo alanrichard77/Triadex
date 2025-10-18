@@ -79,4 +79,3 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "Erro interno ao processar a requisição. Tente novamente em instantes."}
     )
-
