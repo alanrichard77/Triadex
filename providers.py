@@ -119,4 +119,58 @@ def parse_yahoo(symbol: str, data: Dict[str, Any]) -> QuoteInternal:
     )
 
 
-#
+# =============== ORQUESTRADOR COM FALLBACK ===============
+class QuoteOrchestrator:
+    """Orquestra consultas e aplica fallback automático entre fontes."""
+
+    def __init__(self):
+        self.cache = _CACHE
+
+    async def get_quote(self, resolved: ResolvedSymbol, prefer: Optional[str] = None) -> QuoteInternal:
+        """Consulta múltiplas fontes com fallback e cache."""
+        cache_key = f"{resolved.symbol}:{prefer or 'auto'}"
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+
+        providers = ["brapi", "yahoo"]
+        if prefer in providers:
+            providers.remove(prefer)
+            ordered = [prefer] + providers
+        else:
+            ordered = providers
+
+        last_error = None
+
+        for p in ordered:
+            try:
+                if p == "brapi":
+                    data = await fetch_brapi(resolved.symbol)
+                    if data:
+                        parsed = parse_brapi(resolved.symbol, data)
+                        self._validate(parsed)
+                        self.cache[cache_key] = parsed
+                        return parsed
+
+                elif p == "yahoo":
+                    data = fetch_yahoo_sync(resolved.symbol)
+                    if data:
+                        parsed = parse_yahoo(resolved.symbol, data)
+                        self._validate(parsed)
+                        self.cache[cache_key] = parsed
+                        return parsed
+
+            except Exception as e:
+                last_error = e
+                continue
+
+        raise RuntimeError(f"Todas as fontes falharam para {resolved.symbol}. {last_error or ''}")
+
+    def _validate(self, q: QuoteInternal) -> None:
+        """Validações simples de integridade de dados."""
+        if q.price.last is not None and (math.isnan(q.price.last) or q.price.last <= 0):
+            q.status.notes.append("Preço inválido ou ausente")
+            q.status.confidence = "low"
+
+        if not q.price.currency:
+            q.price.currency = "BRL"
+            q.status.notes.append("Moeda inferida automaticamente")
