@@ -82,4 +82,14 @@ footer {
   padding-top: 12px;
 }
 .brand { opacity: 0.25; }
+/* acrescente ao final do seu styles.css */
+.list-controls { display:flex; gap:12px; align-items:center; justify-content:flex-start; margin-bottom:10px; }
+.list-controls select {
+  background:#0f1624; border:1px solid var(--border); border-radius:10px; padding:10px; color:var(--text);
+}
+.table-wrap { overflow-x: auto; }
+.t { width:100%; border-collapse: collapse; }
+.t th, .t td { border-bottom:1px solid var(--border); padding:10px; text-align:right; }
+.t th:first-child, .t td:first-child { text-align:left; }
+.td-r { text-align:right; }
 
