@@ -10,13 +10,13 @@
   <div class="container">
     <header>
       <h1>Triadex</h1>
-      <p class="subtitle">Módulo 1, cotações confiáveis e rápidas</p>
+      <p class="subtitle">Módulo 1 — cotações confiáveis, com fechamento quando o mercado estiver fechado</p>
     </header>
 
     <section class="card search">
       <input id="q" type="text" placeholder="Digite um ticker, ex: PETR4, VALE3, IVVB11, AAPL" />
       <button id="btn">Buscar</button>
-      <small class="hint">Dica: para ações da B3 você pode usar PETR4, VALE3, IVVB11.</small>
+      <small class="hint">Dica: para ações da B3 use o código sem sufixo (.SA é inferido automaticamente).</small>
     </section>
 
     <section id="result" class="card result hidden">
@@ -37,7 +37,7 @@
           <div class="value" id="mcap">—</div>
         </div>
         <div class="metric">
-          <div class="label">Volume</div>
+          <div class="label">Volume (qtd)</div>
           <div class="value" id="vol">—</div>
         </div>
         <div class="metric">
@@ -46,6 +46,30 @@
         </div>
       </div>
       <div class="notes" id="notes"></div>
+    </section>
+
+    <section class="card">
+      <div class="list-controls">
+        <div>
+          <label for="listSel">Listas rápidas</label>
+          <select id="listSel"></select>
+        </div>
+        <button id="listBtn">Carregar lista</button>
+      </div>
+      <div class="table-wrap">
+        <table class="t">
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Preço</th>
+              <th>Var %</th>
+              <th>Volume</th>
+              <th>Market Cap</th>
+            </tr>
+          </thead>
+          <tbody id="listBody"></tbody>
+        </table>
+      </div>
     </section>
 
     <footer>
@@ -58,17 +82,18 @@
     const elQ = document.getElementById('q');
     const elBtn = document.getElementById('btn');
     const elRes = document.getElementById('result');
+    const listSel = document.getElementById('listSel');
+    const listBtn = document.getElementById('listBtn');
+    const listBody = document.getElementById('listBody');
 
     function formatNumber(n) {
       if (n === null || n === undefined) return "—";
       return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 }).format(n);
     }
-
     function formatMoney(n, ccy) {
       if (n === null || n === undefined) return "—";
       return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: ccy || 'BRL' }).format(n);
     }
-
     function formatMCap(x, ccy) {
       if (x === null || x === undefined) return "—";
       const abs = Math.abs(x);
@@ -79,35 +104,23 @@
       return `${formatNumber(v)}${suffix} ${ccy || ''}`.trim();
     }
 
-    function show(data) {
+    function showOne(data) {
       elRes.classList.remove('hidden');
-
       document.getElementById('name').textContent = data.resolved.name || data.resolved.symbol;
       document.getElementById('ticker').textContent = data.resolved.symbol;
-
       const last = data.price.last;
       const pct = data.price.change_pct;
       const ccy = data.price.currency || 'BRL';
-
       document.getElementById('price').textContent = formatMoney(last, ccy);
       document.getElementById('currency').textContent = ccy;
       document.getElementById('asof').textContent = data.price.asof ? data.price.asof : 'agora';
       document.getElementById('source').textContent = data.price.source;
-
       const ch = document.getElementById('change');
-      if (pct === null || pct === undefined) {
-        ch.textContent = '—';
-        ch.className = 'change';
-      } else {
-        const sign = pct >= 0 ? '+' : '';
-        ch.textContent = `${sign}${pct.toFixed(2)}%`;
-        ch.className = 'change ' + (pct >= 0 ? 'up' : 'down');
-      }
-
+      if (pct === null || pct === undefined) { ch.textContent = '—'; ch.className = 'change'; }
+      else { const sign = pct >= 0 ? '+' : ''; ch.textContent = `${sign}${pct.toFixed(2)}%`; ch.className = 'change ' + (pct >= 0 ? 'up' : 'down'); }
       document.getElementById('mcap').textContent = formatMCap(data.market_cap.value, data.market_cap.currency);
       document.getElementById('vol').textContent = data.volume.value ? formatNumber(data.volume.value) : '—';
       document.getElementById('conf').textContent = data.status.confidence;
-
       const notes = data.status.notes || [];
       document.getElementById('notes').innerHTML = notes.length ? `<ul>${notes.map(n => `<li>${n}</li>`).join('')}</ul>` : '';
     }
@@ -117,17 +130,47 @@
       if (!q) return;
       const url = `/api/quote?q=${encodeURIComponent(q)}`;
       const res = await fetch(url);
-      if (!res.ok) {
-        alert('Não consegui obter a cotação. Tente novamente em instantes.');
-        return;
-      }
+      if (!res.ok) { alert('Não consegui obter a cotação.'); return; }
       const data = await res.json();
-      show(data);
+      showOne(data);
+    }
+
+    async function loadLists() {
+      const r = await fetch('/api/lists');
+      const arr = await r.json();
+      listSel.innerHTML = '';
+      for (const it of arr) {
+        const o = document.createElement('option');
+        o.value = it.key; o.textContent = it.label;
+        listSel.appendChild(o);
+      }
+    }
+
+    async function loadList() {
+      const key = listSel.value;
+      const r = await fetch(`/api/watchlist?list=${encodeURIComponent(key)}`);
+      const data = await r.json();
+      listBody.innerHTML = '';
+      for (const row of data.items) {
+        const tr = document.createElement('tr');
+        const pct = row.price.change_pct;
+        tr.innerHTML = `
+          <td>${row.resolved.symbol}</td>
+          <td class="td-r">${row.price.last !== null ? formatNumber(row.price.last) : '—'} ${row.price.currency || ''}</td>
+          <td class="td-r ${pct==null?'':(pct>=0?'up':'down')}">${pct==null?'—':(pct>0?'+':'')+pct.toFixed(2)+'%'}</td>
+          <td class="td-r">${row.volume.value !== null ? formatNumber(row.volume.value) : '—'}</td>
+          <td class="td-r">${row.market_cap.value !== null ? formatMCap(row.market_cap.value, row.market_cap.currency) : '—'}</td>
+        `;
+        listBody.appendChild(tr);
+      }
     }
 
     elBtn.addEventListener('click', fetchQuote);
     elQ.addEventListener('keydown', e => { if (e.key === 'Enter') fetchQuote(); });
+    listBtn.addEventListener('click', loadList);
+
+    // boot
+    loadLists();
   </script>
 </body>
 </html>
-
