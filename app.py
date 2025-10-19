@@ -3,7 +3,7 @@ import json
 import logging
 import asyncio
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, HTMLResponse
@@ -13,7 +13,14 @@ from fastapi.templating import Jinja2Templates
 from resolver import resolve_symbol
 from providers import QuoteOrchestrator
 from schemas import QuoteOut, HealthOut
-from watchlists import WATCHLISTS
+
+# 🔧 Importa watchlists de forma resiliente
+try:
+    # caso o arquivo esteja na raiz
+    from watchlists import WATCHLISTS
+except ModuleNotFoundError:
+    # caso esteja em api/watchlists.py (recomendado quando há pasta api/)
+    from api.watchlists import WATCHLISTS  # type: ignore
 
 # ===== Logging estruturado =====
 logging.basicConfig(
@@ -37,7 +44,7 @@ templates = Jinja2Templates(directory=TPL_DIR)
 # Orquestrador de cotações com fallback
 orchestrator = QuoteOrchestrator()
 
-# HTML fallback (sem expor detalhes internos)
+# HTML fallback enxuto
 FALLBACK_HOME = '''<!doctype html>
 <html lang="pt-br"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -140,19 +147,16 @@ async def api_quote(
     )
     return JSONResponse(json.loads(payload.model_dump_json()))
 
-# ======= NOVOS ENDPOINTS: listas e watchlist =======
-
 @app.get("/api/lists")
 async def api_lists():
-    """Retorna o catálogo de listas disponíveis (id e label)."""
     out = [{"key": k, "label": v.get("label", k)} for k, v in WATCHLISTS.items()]
     return JSONResponse(out)
 
 @app.get("/api/watchlist")
 async def api_watchlist(
-    list_key: str = Query(..., alias="list", description="Chave da watchlist, ex: br_bluechips"),
-    prefer: Optional[str] = Query(None, description="Fonte preferida, ex: brapi ou yahoo"),
-    limit: Optional[int] = Query(None, ge=1, le=100, description="Limite opcional de símbolos")
+    list_key: str = Query(..., alias="list"),
+    prefer: Optional[str] = Query(None),
+    limit: Optional[int] = Query(None, ge=1, le=100)
 ):
     wl = WATCHLISTS.get(list_key)
     if not wl:
@@ -162,10 +166,8 @@ async def api_watchlist(
     if limit:
         syms = syms[:limit]
 
-    # Resolve símbolos (aplica heurística .SA se o usuário/arquivo não tiver)
     resolved_list = [resolve_symbol(s)[1] for s in syms]
 
-    # Concorre 5 em 5 para evitar rate-limits
     sem = asyncio.Semaphore(5)
     async def fetch_one(resolved):
         async with sem:
