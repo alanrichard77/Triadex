@@ -1,10 +1,6 @@
 services:
   - type: web
-    name: triadex
+    name: triadex-core
     env: python
-    region: oregon
-    plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:${PORT:-8000} --log-level info
-    healthCheckPath: /health
-    autoDeploy: true
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port 8000
