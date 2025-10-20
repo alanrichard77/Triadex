@@ -9,81 +9,93 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 
 from resolver import resolve_symbol
 from providers import QuoteOrchestrator
 from schemas import QuoteOut, HealthOut
 
-# 🔧 Importa watchlists de forma resiliente
 try:
-    # caso o arquivo esteja na raiz
     from watchlists import WATCHLISTS
 except ModuleNotFoundError:
-    # caso esteja em api/watchlists.py (recomendado quando há pasta api/)
     from api.watchlists import WATCHLISTS  # type: ignore
 
-# ===== Logging estruturado =====
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s | %(levelname)s | triadex | %(message)s"
 )
 log = logging.getLogger("triadex")
 
-# Pastas de UI
 TPL_DIR = os.path.join("ui", "templates")
 STATIC_DIR = os.path.join("ui", "static")
 
-app = FastAPI(title="Triadex • Módulo 1", version="0.2.0")
+app = FastAPI(title="Triadex", version="0.2.1")
 
-# Static com tolerância a ausência de diretório
+# Middlewares padrão de app web
+app.add_middleware(GZipMiddleware, minimum_size=500)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], allow_credentials=False,
+    allow_methods=["GET"], allow_headers=["*"]
+)
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR, check_dir=False), name="static")
-
-# Templates Jinja (se a pasta não existir, a rota "/" usa fallback)
 templates = Jinja2Templates(directory=TPL_DIR)
-
-# Orquestrador de cotações com fallback
 orchestrator = QuoteOrchestrator()
 
-# HTML fallback enxuto
 FALLBACK_HOME = '''<!doctype html>
 <html lang="pt-br"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Triadex</title>
-<style>body{background:#0b0f17;color:#e8eef9;font-family:system-ui,Arial;margin:0}
-.container{max-width:720px;margin:40px auto;padding:16px}
+<style>
+body{background:#0b0f17;color:#e8eef9;font-family:system-ui,Arial;margin:0}
+.container{max-width:880px;margin:40px auto;padding:16px}
 .card{background:#121824;border:1px solid #1b2433;border-radius:14px;padding:16px}
 h1{margin:0 0 6px 0}small{color:#9db0cf}
 input,button,select{padding:12px;border-radius:10px;border:1px solid #1b2433}
 input{background:#0f1624;color:#e8eef9;width:100%;margin-top:8px}
 button{background:#4ea1ff;color:#001427;font-weight:600;margin-top:8px;border:0;cursor:pointer}
-pre{white-space:pre-wrap;background:#0f1624;padding:12px;border-radius:10px}
+.row{display:flex;gap:10px}
+#msg{margin-top:8px;color:#9db0cf;font-size:12px}
 .table{width:100%;border-collapse:collapse;margin-top:12px}
 .table th,.table td{border-bottom:1px solid #1b2433;padding:8px;text-align:right}
 .table th:first-child,.table td:first-child{text-align:left}
-.badge{font-size:12px;color:#9db0cf}
 .up{color:#3ad07a}.down{color:#ff5c5c}
 </style></head><body>
 <div class="container">
   <h1>Triadex</h1>
   <div class="card">
-    <div><span class=badge>Primeira tela em modo mínimo</span></div>
-    <label>Buscar ticker</label>
-    <input id="q" placeholder="PETR4, VALE3, IVVB11, AAPL">
-    <button onclick="go()">Buscar</button>
-    <pre id="out"></pre>
+    <div class="row">
+      <input id="q" placeholder="Ticker (ex: PETR4, VALE3, IVVB11, AAPL)">
+      <button id="btn" onclick="go()">Buscar</button>
+    </div>
+    <div id="msg"></div>
+    <pre id="out" style="white-space:pre-wrap;background:#0f1624;padding:12px;border-radius:10px;margin-top:8px"></pre>
     <div style="margin-top:12px">
-      <label>Lista rápida</label>
-      <select id="lst"></select>
-      <button onclick="loadList()">Carregar</button>
+      <div class="row">
+        <select id="lst"></select>
+        <button onclick="loadList()">Carregar lista</button>
+      </div>
       <table class="table" id="tbl"></table>
     </div>
   </div>
 </div>
 <script>
+let ctrl;
+function setBusy(b){ const btn=document.getElementById('btn'); btn.disabled=b; btn.textContent=b?'Buscando...':'Buscar'; }
+function toast(t){ const m=document.getElementById('msg'); m.textContent=t||''; }
 async function go(){
   const q=document.getElementById('q').value.trim(); if(!q) return;
-  const r=await fetch('/api/quote?q='+encodeURIComponent(q));
-  document.getElementById('out').textContent = await r.text();
+  if (ctrl) ctrl.abort(); ctrl = new AbortController();
+  setBusy(true); toast('');
+  try{
+    const r=await fetch('/api/quote?q='+encodeURIComponent(q), {signal: ctrl.signal});
+    const txt=await r.text();
+    if(!r.ok){ toast('Não consegui obter agora — tente de novo.'); }
+    document.getElementById('out').textContent=txt;
+  }catch(e){ toast('Conexão interrompida.'); }
+  finally{ setBusy(false); }
 }
 async function loadLists(){
   const r=await fetch('/api/lists'); const data=await r.json();
@@ -128,23 +140,21 @@ async def health():
 
 @app.get("/api/quote", response_model=QuoteOut)
 async def api_quote(
-    q: str = Query(..., min_length=1, description="Ticker ou nome, ex: PETR4, VALE3, AAPL, IVVB11"),
-    prefer: Optional[str] = Query(None, description="Fonte preferida, ex: brapi ou yahoo")
+    q: str = Query(..., min_length=1, description="Ticker"),
+    prefer: Optional[str] = Query(None, description="brapi|yahoo|stooq")
 ):
-    symbol_in, resolved = resolve_symbol(q)
-    try:
-        quote = await orchestrator.get_quote(resolved, prefer=prefer)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    _, resolved = resolve_symbol(q)
+    quote = await orchestrator.get_quote(resolved, prefer=prefer)
 
     payload = QuoteOut(
-        ticker_in=symbol_in,
+        ticker_in=q,
         resolved=resolved,
         price=quote.price,
         market_cap=quote.market_cap,
         volume=quote.volume,
         status=quote.status
     )
+    # Sempre 200 — UX estável
     return JSONResponse(json.loads(payload.model_dump_json()))
 
 @app.get("/api/lists")
@@ -160,7 +170,7 @@ async def api_watchlist(
 ):
     wl = WATCHLISTS.get(list_key)
     if not wl:
-        raise HTTPException(status_code=404, detail="Lista não encontrada")
+        return JSONResponse({"list": {"key": list_key, "label": list_key}, "items": []})
 
     syms = wl.get("symbols", [])
     if limit:
@@ -168,26 +178,17 @@ async def api_watchlist(
 
     resolved_list = [resolve_symbol(s)[1] for s in syms]
 
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(6)
     async def fetch_one(resolved):
         async with sem:
-            try:
-                q = await orchestrator.get_quote(resolved, prefer=prefer)
-                return {
-                    "resolved": resolved.model_dump(),
-                    "price": q.price.model_dump(),
-                    "market_cap": q.market_cap.model_dump(),
-                    "volume": q.volume.model_dump(),
-                    "status": q.status.model_dump(),
-                }
-            except Exception as e:
-                return {
-                    "resolved": resolved.model_dump(),
-                    "price": {"last": None, "change_pct": None, "currency": None, "asof": None, "source": "error"},
-                    "market_cap": {"value": None, "currency": None},
-                    "volume": {"value": None},
-                    "status": {"confidence": "low", "notes": [f"erro: {str(e)[:120]}"]},
-                }
+            q = await orchestrator.get_quote(resolved, prefer=prefer)
+            return {
+                "resolved": resolved.model_dump(),
+                "price": q.price.model_dump(),
+                "market_cap": q.market_cap.model_dump(),
+                "volume": q.volume.model_dump(),
+                "status": q.status.model_dump(),
+            }
 
     items = await asyncio.gather(*[fetch_one(r) for r in resolved_list])
     return JSONResponse({"list": {"key": list_key, "label": wl.get("label", list_key)}, "items": items})
