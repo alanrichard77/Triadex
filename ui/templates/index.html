@@ -3,57 +3,36 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Triadex • Cotações</title>
+  <title>Triadex</title>
   <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    .row{display:flex;gap:10px}
+    #msg{margin-top:8px;color:#9db0cf;font-size:12px}
+    .t { width:100%; border-collapse: collapse; }
+    .t th, .t td { border-bottom:1px solid var(--border); padding:10px; text-align:right; }
+    .t th:first-child, .t td:first-child { text-align:left; }
+    .up{color:#3ad07a}.down{color:#ff5c5c}
+  </style>
 </head>
 <body>
   <div class="container">
     <header>
       <h1>Triadex</h1>
-      <p class="subtitle">Módulo 1 — cotações confiáveis, com fechamento quando o mercado estiver fechado</p>
+      <p class="subtitle">Cotações e fechamento do último pregão quando indisponível intraday</p>
     </header>
 
-    <section class="card search">
-      <input id="q" type="text" placeholder="Digite um ticker, ex: PETR4, VALE3, IVVB11, AAPL" />
-      <button id="btn">Buscar</button>
-      <small class="hint">Dica: para ações da B3 use o código sem sufixo (.SA é inferido automaticamente).</small>
-    </section>
-
-    <section id="result" class="card result hidden">
+    <section class="card">
       <div class="row">
-        <div>
-          <div class="name" id="name">—</div>
-          <div class="ticker" id="ticker">—</div>
-        </div>
-        <div class="price-block">
-          <div class="price" id="price">—</div>
-          <div class="change" id="change">—</div>
-          <div class="meta"><span id="currency">—</span> • <span id="asof">—</span> • <span id="source">—</span></div>
-        </div>
+        <input id="q" type="text" placeholder="Ticker (ex: PETR4, VALE3, IVVB11, AAPL)" />
+        <button id="btn">Buscar</button>
       </div>
-      <div class="grid">
-        <div class="metric">
-          <div class="label">Market Cap</div>
-          <div class="value" id="mcap">—</div>
-        </div>
-        <div class="metric">
-          <div class="label">Volume (qtd)</div>
-          <div class="value" id="vol">—</div>
-        </div>
-        <div class="metric">
-          <div class="label">Confiança</div>
-          <div class="value" id="conf">—</div>
-        </div>
-      </div>
-      <div class="notes" id="notes"></div>
+      <div id="msg"></div>
+      <pre id="out" style="white-space:pre-wrap;background:#0f1624;padding:12px;border-radius:10px;margin-top:8px"></pre>
     </section>
 
     <section class="card">
-      <div class="list-controls">
-        <div>
-          <label for="listSel">Listas rápidas</label>
-          <select id="listSel"></select>
-        </div>
+      <div class="list-controls row">
+        <select id="listSel"></select>
         <button id="listBtn">Carregar lista</button>
       </div>
       <div class="table-wrap">
@@ -79,60 +58,30 @@
   </div>
 
   <script>
+    let ctrl;
     const elQ = document.getElementById('q');
     const elBtn = document.getElementById('btn');
-    const elRes = document.getElementById('result');
+    const elMsg = document.getElementById('msg');
+    const elOut = document.getElementById('out');
     const listSel = document.getElementById('listSel');
     const listBtn = document.getElementById('listBtn');
     const listBody = document.getElementById('listBody');
 
-    function formatNumber(n) {
-      if (n === null || n === undefined) return "—";
-      return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 }).format(n);
-    }
-    function formatMoney(n, ccy) {
-      if (n === null || n === undefined) return "—";
-      return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: ccy || 'BRL' }).format(n);
-    }
-    function formatMCap(x, ccy) {
-      if (x === null || x === undefined) return "—";
-      const abs = Math.abs(x);
-      let v = x, suffix = '';
-      if (abs >= 1e12) { v = x / 1e12; suffix = ' tri'; }
-      else if (abs >= 1e9) { v = x / 1e9; suffix = ' bi'; }
-      else if (abs >= 1e6) { v = x / 1e6; suffix = ' mi'; }
-      return `${formatNumber(v)}${suffix} ${ccy || ''}`.trim();
-    }
-
-    function showOne(data) {
-      elRes.classList.remove('hidden');
-      document.getElementById('name').textContent = data.resolved.name || data.resolved.symbol;
-      document.getElementById('ticker').textContent = data.resolved.symbol;
-      const last = data.price.last;
-      const pct = data.price.change_pct;
-      const ccy = data.price.currency || 'BRL';
-      document.getElementById('price').textContent = formatMoney(last, ccy);
-      document.getElementById('currency').textContent = ccy;
-      document.getElementById('asof').textContent = data.price.asof ? data.price.asof : 'agora';
-      document.getElementById('source').textContent = data.price.source;
-      const ch = document.getElementById('change');
-      if (pct === null || pct === undefined) { ch.textContent = '—'; ch.className = 'change'; }
-      else { const sign = pct >= 0 ? '+' : ''; ch.textContent = `${sign}${pct.toFixed(2)}%`; ch.className = 'change ' + (pct >= 0 ? 'up' : 'down'); }
-      document.getElementById('mcap').textContent = formatMCap(data.market_cap.value, data.market_cap.currency);
-      document.getElementById('vol').textContent = data.volume.value ? formatNumber(data.volume.value) : '—';
-      document.getElementById('conf').textContent = data.status.confidence;
-      const notes = data.status.notes || [];
-      document.getElementById('notes').innerHTML = notes.length ? `<ul>${notes.map(n => `<li>${n}</li>`).join('')}</ul>` : '';
-    }
+    function setBusy(b){ elBtn.disabled=b; elBtn.textContent=b?'Buscando...':'Buscar'; }
+    function toast(t){ elMsg.textContent=t||''; }
 
     async function fetchQuote() {
-      const q = elQ.value.trim();
-      if (!q) return;
-      const url = `/api/quote?q=${encodeURIComponent(q)}`;
-      const res = await fetch(url);
-      if (!res.ok) { alert('Não consegui obter a cotação.'); return; }
-      const data = await res.json();
-      showOne(data);
+      const q = elQ.value.trim(); if (!q) return;
+      if (ctrl) ctrl.abort(); ctrl = new AbortController();
+      setBusy(true); toast('');
+      try {
+        const res = await fetch(`/api/quote?q=${encodeURIComponent(q)}`, {signal: ctrl.signal});
+        const txt = await res.text();
+        elOut.textContent = txt;
+        if (!res.ok) toast('Não consegui obter agora — tente novamente.');
+      } catch {
+        toast('Conexão interrompida.');
+      } finally { setBusy(false); }
     }
 
     async function loadLists() {
@@ -141,8 +90,7 @@
       listSel.innerHTML = '';
       for (const it of arr) {
         const o = document.createElement('option');
-        o.value = it.key; o.textContent = it.label;
-        listSel.appendChild(o);
+        o.value = it.key; o.textContent = it.label; listSel.appendChild(o);
       }
     }
 
@@ -156,10 +104,10 @@
         const pct = row.price.change_pct;
         tr.innerHTML = `
           <td>${row.resolved.symbol}</td>
-          <td class="td-r">${row.price.last !== null ? formatNumber(row.price.last) : '—'} ${row.price.currency || ''}</td>
+          <td class="td-r">${row.price.last ?? '—'} ${row.price.currency || ''}</td>
           <td class="td-r ${pct==null?'':(pct>=0?'up':'down')}">${pct==null?'—':(pct>0?'+':'')+pct.toFixed(2)+'%'}</td>
-          <td class="td-r">${row.volume.value !== null ? formatNumber(row.volume.value) : '—'}</td>
-          <td class="td-r">${row.market_cap.value !== null ? formatMCap(row.market_cap.value, row.market_cap.currency) : '—'}</td>
+          <td class="td-r">${row.volume.value ?? '—'}</td>
+          <td class="td-r">${row.market_cap.value ?? '—'} ${row.market_cap.currency || ''}</td>
         `;
         listBody.appendChild(tr);
       }
@@ -168,8 +116,6 @@
     elBtn.addEventListener('click', fetchQuote);
     elQ.addEventListener('keydown', e => { if (e.key === 'Enter') fetchQuote(); });
     listBtn.addEventListener('click', loadList);
-
-    // boot
     loadLists();
   </script>
 </body>
